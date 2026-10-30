@@ -1,0 +1,45 @@
+import assert from 'node:assert/strict';
+import { bridgeHarness } from './audit-bridge-harness.mjs';
+const config = { dsh: { authToken: 'fixture-only', model: 'original-chat' }, socialV2: { tools: { describeImage: true }, vision: { enabled: true } } };
+const event = (text, withImage = true, extra = []) => ({ user_id: 123, self_id: 999, message_id: 10, message: [{ type: 'text', data: { text } }, ...(withImage ? [{ type: 'image', data: { file: 'fixture.png' } }] : []), ...extra] });
+let calls = 0;
+const h = await bridgeHarness({ config, globals: { describeImages: async ({ images }) => { calls++; assert.ok(images.some(i => i.data)); return { text: '这是一只猫', model: 'fixture-vision', provider: 'zhipu' }; } } });
+let server;
+try {
+  h.setMode('reserved2');
+  await h.handleIncoming('private', '123', event('/识图 这是什么'), h.cfg);
+  assert.equal(calls, 1);
+  assert.equal(h.calls.created.length, 0);
+  assert.equal(h.calls.prompts.length, 0);
+  assert.equal(h.cfg.dsh.model, 'original-chat');
+  assert.ok(h.calls.sent.some(c => c.text === '这是一只猫'));
+  await h.handleIncoming('private', '123', event('/识图', false, [{ type: 'reply', data: { id: '10' } }]), h.cfg);
+  assert.equal(calls, 2, '引用本会话图片可单独识别');
+  server = h.startConsoleServer();
+  if (!server.listening) await new Promise(r => server.once('listening', r));
+  const request = async (token, body) => {
+    const r = await fetch(`http://127.0.0.1:${server.address().port}/api/socialV2/describe-image`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-console-token': 'fixture-console-token', 'x-agent-call': '1', ...(token ? { 'x-agent-token': token } : {}) }, body: JSON.stringify(body) });
+    return { status: r.status, body: await r.json() };
+  };
+  const token = h.getSocialV2State('private:123').agentToken;
+  assert.equal((await request(null, { key: 'private:123', messageId: '10' })).status, 403);
+  assert.equal((await request(token, { key: 'group:456', messageId: '10' })).status, 403);
+  const missing = await request(token, { key: 'private:123', messageId: 'missing' });
+  assert.equal(missing.body.ok, false);
+  assert.equal(calls, 2);
+  const result = await request(token, { key: 'private:123', messageId: '10' });
+  assert.equal(result.body.text, '这是一只猫');
+  assert.equal(result.body.sent, undefined, '识图工具只返回结果');
+  h.cfg.socialV2.vision.enabled = false;
+  assert.equal((await request(token, { key: 'private:123', messageId: '10' })).body.ok, false);
+  assert.equal(calls, 3);
+  assert.equal(h.calls.prompts.length, 0);
+  h.cfg.socialV2.vision.enabled = true;
+  await h.handleIncoming('private', '123', { ...event('今天碰到的猫'), message_id: 20 }, h.cfg);
+  assert.equal(calls, 4, '普通附图消息无需命令自动识别');
+  assert.ok(h.getSocialV2State('private:123').unread.at(-1).text.includes('自动识别结果'));
+  await h.handleIncoming('private', '123', { user_id: 123, self_id: 999, message_id: 21, message: [{ type: 'image', data: { file: 'sticker.png', emoji_id: 'fixture-emoji', summary: '猫猫' } }] }, h.cfg);
+  assert.equal(calls, 5, '纯表情包消息无需文字自动识别');
+  assert.equal(h.getSocialV2State('private:123').unread.at(-1).visionStatus, 'done');
+  console.log('PASS 直接/引用识图绕过聊天模型；工具鉴权、跨会话、空图及关闭开关隔离');
+} finally { if (server) await new Promise(r => server.close(r)); await h.close(); }

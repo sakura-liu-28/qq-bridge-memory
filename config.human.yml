@@ -1,0 +1,72 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# config.human.yml —— 通用真人节奏配置示例
+#
+# 这个文件不是 qq-bridge 直接读的（它只读 config.json），而是给你看、给你改的
+# 「人类可读版」；写完后跑：
+#
+#     node scripts/apply-human-profile.mjs --dry-run   # 先看会改哪些值
+#     node scripts/apply-human-profile.mjs             # 写进 config.json（自动备份）
+#
+# 想反悔：node scripts/apply-human-profile.mjs --revert
+#
+# 只写了需要改的项，没写的保持 config.json 原值。改完需要重启桥接才生效。
+# 数值单位都是毫秒，除非注释另说。
+# ─────────────────────────────────────────────────────────────────────────────
+
+socialV2:
+  # 发完消息多久回来看一眼有没有人接。短一点，接话更连贯。
+  autoReplyCheckMs: 20000
+
+  send:
+    # 一次回复最多分几条气泡。改小一点，避免像在刷屏。
+    burstMaxMessages: 4
+    # 两条气泡之间停多久：1200~3000ms 大约是一个人在手机上打完一句的时间。
+    burstIntervalMinMs: 1200
+    burstIntervalMaxMs: 3000
+    # 偶尔"打完一条，想了会儿再补一条"的长停顿：12% 的概率停 4~9 秒。
+    longGapProbability: 0.12
+    longGapMinMs: 4000
+    longGapMaxMs: 9000
+    # 0 表示不限制发送频率（文字、表情包与拍一拍共用）。
+    maxSendPerMinute: 0
+    maxSendPerHour: 0
+    # 单条字数上限。400 字足够说完一件事，又逼着它别写成小作文。
+    maxMessageChars: 400
+    # 单条气泡最多能拖多久（和上面的长停顿配合，封顶 9 秒）。
+    maxGapMs: 9000
+
+  voice:
+    # 语音额度独立计算，同样取消分钟与小时限制。
+    maxPerMinute: 0
+    maxPerHour: 0
+
+  wait:
+    # 对方最后一条消息之后的静默。0.5 秒：看到就回，不刻意等。
+    minQuietAfterNewMs: 500
+    # qq_wait_for_messages(purpose="reply") 的默认静默时长，跟着上面一起调。
+    defaultQuietMs: 500
+
+  proactive:
+    # 主动机会：原来 1~2 小时才看一次、而且要安静 45 分钟，几乎等于不会主动。
+    # 现在 20~45 分钟看一次，安静满 10 分钟就算"可以冒个泡"。
+    enabled: true
+    checkIntervalMinMs: 1200000
+    checkIntervalMaxMs: 2700000
+    idleThresholdMs: 600000
+    # 每次判定真的开口的概率。凌晨会自动降到 30%，刚说完话半小时内也会减半。
+    probability: 0.4
+
+  wake:
+    # 收到消息后等多久再触发唤醒（合并你连着发的几句）。1 秒基本等于不等。
+    batchWindowMs: 1000
+    # 潜水时长的推荐区间：10~60 分钟。原来 5~120 分钟，一睡两小时就"失联"了。
+    recommendedSleepMinMs: 600000
+    recommendedSleepMaxMs: 3600000
+    recommendedProbability: 0.05
+    # 这段是给模型看的潜水说明，跟着上面的数字一起改，别让它读到旧值。
+    recommendedHint: >-
+      如果你要潜水，推荐先调用 qq_wait_for_messages(timeoutMs=300000) 完成一次沉睡前观察：5 分钟内没人说话就可以设置下一次唤醒并沉睡；若期间有人发新消息，先查看 newMessages，判断不需要你参与可直接沉睡，若参与了则下次想睡需再等观察窗口。私聊里潜水时长推荐 10~60 分钟，普通消息概率 0.05；@/名字/关键词/提问唤醒建议保持开启。需要等特定某人/某几人时，可额外设置 triggers.speakerIds。
+
+  sticker:
+    # 提示词里最多列几张表情。列得多，它更容易想起来发图。
+    promptMaxStickers: 10

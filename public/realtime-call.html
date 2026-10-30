@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>示例伙伴 · 实时语音</title><link rel="stylesheet" href="/call.css"><script type="module" src="/call.js"></script></head>
+<body>
+<main class="layout">
+  <section class="call-card" aria-labelledby="name">
+    <div class="eyebrow"><span class="dot"></span> 实时语音</div>
+    <div class="portrait-wrap"><img id="portrait" src="/avatar" alt="示例伙伴" class="portrait"><div class="portrait-fallback" aria-hidden="true">满</div></div>
+    <h1 id="name">示例伙伴</h1><p id="voice" class="muted">正在读取音色…</p>
+    <div class="sound-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+    <p id="status" role="status" aria-live="polite">未接通</p><p id="duration" class="duration">00:00</p>
+    <p id="error" class="error" role="alert" hidden></p>
+    <div class="controls"><button id="start" class="primary" disabled>接通</button><button id="mute" disabled aria-pressed="false">静音</button><button id="interrupt" disabled>打断</button><button id="stop" class="danger" disabled>挂断</button></div>
+    <p class="hint">接通后直接说话，也可以随时打断。</p>
+  </section>
+</main>
+</body></html>

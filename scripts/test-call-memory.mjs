@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { openCallMemory,readCallMemories,formatCallMemories,clearCallMemories,qqContextForCall } from '../src/call-memory.js';
+import { bridgeHarness } from './audit-bridge-harness.mjs';
+const h=await bridgeHarness({config:{socialV2:{selfLife:{privateQQ:'123'},voice:{realtime:{native:{allowedCallers:['123','124']}}}}},files:{'state/current-role.json':{role:'示例伙伴',mode:'active'},'roles/示例伙伴.md':'示例伙伴'}});
+let server;
+try{
+ const scope={root:h.temp,role:'示例伙伴',qq:'123'};
+ const record=openCallMemory({...scope,secrets:['fixture-secret']});record.append('user','我周六想去杭州 fixture-secret');record.append('assistant','周日再去吧',{interrupted:true});record.finish();
+ assert.equal(readCallMemories(scope).length,1);assert.doesNotMatch(formatCallMemories(readCallMemories(scope)),/fixture-secret|周日再去/);assert.match(formatCallMemories(readCallMemories(scope)),/周六想去杭州/);
+ assert.equal(readCallMemories({...scope,qq:'124'}).length,0);assert.equal(readCallMemories({...scope,role:'示例角色乙'}).length,0);assert.throws(()=>readCallMemories({...scope,role:'../escape'}));
+ const undo=clearCallMemories(scope);assert.equal(readCallMemories(scope).length,0);undo();assert.equal(readCallMemories(scope).length,1);
+ assert.match(h.buildWakePromptV2('private:123','private'),/周六想去杭州/);assert.doesNotMatch(h.buildWakePromptV2('group:456','private'),/周六想去杭州/);
+ h.appendSocialV2Message('private:123','对方','QQ里说过喜欢荔枝','喜欢荔枝',false,true,1,[],123);
+ assert.match(qqContextForCall({root:h.temp,key:'private:123'}),/喜欢荔枝/);assert.doesNotMatch(qqContextForCall({root:h.temp,key:'private:124'}),/喜欢荔枝/);
+ server=h.startConsoleServer();if(!server.listening)await new Promise(r=>server.once('listening',r));
+ const base=`http://127.0.0.1:${server.address().port}/api/socialV2/`;
+ const get=async(query)=>{const r=await fetch(base+query,{headers:{'x-console-token':'fixture-console-token'}});return r.json();};
+ assert.match((await get('memory?key=private:123&category=callHistory&query='+encodeURIComponent('杭州'))).formatted,/杭州/);
+ assert.doesNotMatch((await get('memory?key=private:123&category=callHistory&query='+encodeURIComponent('北京'))).formatted,/杭州/);
+ const file=h.temp+'/state/social-v2.json',saved=fs.readFileSync(file);fs.unlinkSync(file);fs.mkdirSync(file);
+ let r=await fetch(base+'memory-clear',{method:'POST',headers:{'content-type':'application/json','x-console-token':'fixture-console-token'},body:JSON.stringify({key:'private:123'})});assert.equal((await r.json()).ok,false);assert.equal(readCallMemories(scope).length,1,'失败回滚电话记录，不能假报忘记');
+ fs.rmdirSync(file);fs.writeFileSync(file,saved);
+ r=await fetch(base+'memory-clear',{method:'POST',headers:{'content-type':'application/json','x-console-token':'fixture-console-token'},body:JSON.stringify({key:'private:123',category:'callHistory'})});assert.equal((await r.json()).persisted,true);assert.equal(readCallMemories(scope).length,0);assert.doesNotMatch(h.buildWakePromptV2('private:123','private'),/周六想去杭州/);
+ const second = openCallMemory({...scope,qq:'124'});second.append('user','另一个来电者的阅读约定');second.finish();
+ assert.match(h.buildWakePromptV2('private:124','private'),/另一个来电者的阅读约定/);
+ assert.doesNotMatch(h.buildWakePromptV2('private:123','private'),/另一个来电者的阅读约定/);
+ const oldest = openCallMemory({...scope,startedAt:946684800000});oldest.append('user','很久前的天文观测约定');
+ for(let i=0;i<70;i++)oldest.append('assistant','后来的通话文字'+i);oldest.finish();
+ const directory=path.join(h.temp,'state/calls',scope.role,scope.qq);
+ for(let i=0;i<501;i++)fs.writeFileSync(path.join(directory,`2001-${String(i).padStart(4,'0')}.json`),JSON.stringify({role:scope.role,qq:scope.qq,turns:[{speaker:'user',text:'普通通话'}]}));
+ assert.match(formatCallMemories(readCallMemories({...scope,query:'天文观测'})),/天文观测/);
+}finally{if(server)await new Promise(r=>server.close(r));await h.close();}
+console.log('PASS 电话文字持久化、凭据脱敏、打断过滤、QQ双向上下文、角色/账号隔离、关键词检索、遗忘及失败回滚');

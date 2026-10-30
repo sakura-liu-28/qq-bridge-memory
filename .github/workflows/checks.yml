@@ -1,0 +1,25 @@
+name: Memory and capabilities
+on:
+  pull_request:
+  push:
+    branches: [main, 'feat-*', 'fix-*', 'plus-*']
+jobs:
+  offline-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node --check src/bridge.js
+      - run: npm run test:memory
+      - run: npm run test:capabilities
+      - run: npm run test:call-memory
+      - run: npm run test:voice-console
+      - run: node scripts/test-role-experiences.mjs
+      - run: node scripts/test-friendship.mjs
+      - run: node scripts/test-qq-preset-contract.mjs
+      - run: node scripts/test-agent-preset-patches.mjs
+      - run: node scripts/test-console-static.mjs

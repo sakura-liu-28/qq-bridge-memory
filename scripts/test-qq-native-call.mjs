@@ -1,0 +1,34 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { nativeCallPolicy,startNativeSession,createNativeRunner } from '../src/qq-native-call.js';
+import { readCallMemories } from '../src/call-memory.js';
+const root=fs.mkdtempSync(path.join(os.tmpdir(),'qq-native-call-'));fs.mkdirSync(root+'/state');fs.mkdirSync(root+'/roles');fs.writeFileSync(root+'/state/mode.json',JSON.stringify({mode:'reserved2'}));fs.writeFileSync(root+'/state/current-role.json',JSON.stringify({role:'示例伙伴',mode:'active'}));fs.writeFileSync(root+'/state/social-v2.json',JSON.stringify({paused:false,conversations:{'private:123':{recentMessages:[{text:'喜欢荔枝',isSelf:false}]}}}));fs.writeFileSync(root+'/roles/示例伙伴.md','示例伙伴角色');fs.writeFileSync(root+'/key','fake-cloud-secret');fs.writeFileSync(root+'/token','x'.repeat(64));
+const config={allow:{private:['123']},socialV2:{enabled:true,selfLife:{privateQQ:'123'},voice:{enabled:true,tts:{apiKeyPath:root+'/key'},realtime:{enabled:true,role:'示例伙伴',native:{enabled:true,tokenFile:root+'/token'}}}}};
+let session,runner;
+try{
+ assert.equal(nativeCallPolicy(root,config,'123'),true);assert.equal(nativeCallPolicy(root,config,'124'),false);assert.equal(nativeCallPolicy(root,{...config,allow:{private:[]}},'123'),false);
+ assert.equal(nativeCallPolicy(root,{...config,deny:{private:['123']}},'123'),false);
+ const multi={...config,allow:{private:['123','124']},socialV2:{...config.socialV2,voice:{...config.socialV2.voice,realtime:{...config.socialV2.voice.realtime,native:{...config.socialV2.voice.realtime.native,allowedCallers:['123','124']}}}}};
+ assert.equal(nativeCallPolicy(root,multi,'124'),true);assert.equal(nativeCallPolicy(root,multi,'125'),false);assert.equal(nativeCallPolicy(root,{...multi,deny:{private:['124']}},'124'),false);
+ assert.equal(nativeCallPolicy(root,{...multi,socialV2:{...multi.socialV2,voice:{...multi.socialV2.voice,realtime:{...multi.socialV2.voice.realtime,native:{...multi.socialV2.voice.realtime.native,allowedCallers:[]}}}}},'123'),false);
+ fs.writeFileSync(root+'/state/social-v2.json',JSON.stringify({paused:true}));assert.equal(nativeCallPolicy(root,config,'123'),false);fs.writeFileSync(root+'/state/social-v2.json',JSON.stringify({paused:false,conversations:{'private:123':{recentMessages:[{text:'喜欢荔枝',isSelf:false}]}}}));
+ const children=[];let emit,frames=0,stopped=0,prompt;
+ const spawnAudio=(command)=>{const c=new EventEmitter();c.command=command;c.stdin=new PassThrough();c.stdout=new PassThrough();c.kill=()=>{c.killed=true;c.emit('exit',0);};children.push(c);return c;};
+ session=startNativeSession({root,config,caller:'123',spawnAudio,log:()=>{},connect:args=>{emit=args.emit;prompt=args.instructions;return {audio:()=>frames++,stop:()=>stopped++};}});
+ assert.match(prompt,/喜欢荔枝/);assert.doesNotMatch(prompt,/fake-cloud-secret/);
+ emit({type:'ready'});children.find(c=>c.command==='parec').stdout.write(Buffer.alloc(640));await new Promise(r=>setTimeout(r,35));assert.equal(frames,1);
+ emit({type:'user.text',text:'我周末想去杭州',done:true});emit({type:'assistant.text',text:'去看看吧',done:true});emit({type:'user.started'});session.stop();
+ assert.equal(stopped,1);assert.ok(children.every(c=>c.killed));const memory=readCallMemories({root,role:'示例伙伴',qq:'123'});assert.match(memory[0].turns[0].text,/杭州/);assert.equal(memory[0].turns.length,1,'未完整播放的回复不写入电话上下文');
+ const longConfig={...config,socialV2:{...config.socialV2,memory:{mode:'long-term'},voice:{...config.socialV2.voice,realtime:{...config.socialV2.voice.realtime,sessionContext:{key:'private:123',role:'示例伙伴',memory:'长期档案：喜欢详细解释',rolePrompt:'本私聊的专属称呼是小林'}}}}};
+ session=startNativeSession({root,config:longConfig,caller:'123',spawnAudio,log:()=>{},connect:args=>{prompt=args.instructions;return {audio:()=>{},stop:()=>{}};}});
+ assert.match(prompt,/喜欢详细解释/);assert.match(prompt,/专属称呼是小林/);assert.doesNotMatch(prompt,/喜欢荔枝/);session.stop();
+ assert.throws(()=>startNativeSession({root,config:{...longConfig,socialV2:{...longConfig.socialV2,voice:{...longConfig.socialV2.voice,realtime:{...longConfig.socialV2.voice.realtime,sessionContext:{key:'private:124',role:'示例伙伴',memory:'别人的资料'}}}}},caller:'123',spawnAudio,log:()=>{}}),/背景暂不可读取/);
+ let call={phase:'ringing',inviteAt:'one',callerUin:'124'},accepts=0,starts=0,ends=0,fail=false;
+ runner=createNativeRunner({root,getConfig:()=>config,log:()=>{},fetchImpl:async(url,init)=>{if(fail)throw new Error();if(url.pathname.endsWith('accept')){accepts++;return {ok:true,json:async()=>({code:0})};}return {ok:true,json:async()=>({code:0,data:call})};},start:()=>{starts++;return {stop:()=>ends++};}});
+ await runner.tick();assert.equal(accepts,0);call.callerUin='123';await runner.tick();assert.equal(accepts,1);call.phase='connected';await runner.tick();await runner.tick();assert.equal(starts,1);fail=true;await runner.tick();assert.equal(ends,1);fail=false;await runner.tick();assert.equal(starts,1,'同一个电话断线不反复重开云端会话');
+}finally{runner?.stop();session?.stop();fs.rmSync(root,{recursive:true,force:true});}
+console.log('PASS 原生电话来电白名单、暂停、按帧送音、打断、记忆、进程清理、故障停止和单次会话');
